@@ -723,6 +723,47 @@
             <h3>softmax + cross entropy 为什么常常一起使用</h3>
             <p>softmax 负责把 logits 转成概率分布；cross entropy 负责比较这个概率分布和真实 one-hot 标签的差距。它们正好组成分类任务里“输出概率 + 计算错误程度”的标准组合。</p>
           </div>
+
+          <h3>3. 损失函数到底在训练中做什么</h3>
+          <p>损失函数不是只用来“打分”的，它还是训练的方向盘。模型每次预测后，loss 会告诉我们这次预测离真实答案有多远；反向传播再根据 loss 计算每个参数对错误的责任，最后优化器把参数往让 loss 变小的方向移动。</p>
+          <div class="flow">
+            <div class="step">预测概率 ŷ</div>
+            <div class="step">和真实标签 y 比较</div>
+            <div class="step">得到 loss</div>
+            <div class="step">根据 loss 调参数</div>
+          </div>
+
+          <h3>4. 为什么交叉熵会惩罚“自信地错”</h3>
+          <p>交叉熵对真实类别概率取 <span class="kbd">-log(p)</span>。这个函数有一个很重要的形状：当真实类别概率 p 接近 1 时，loss 接近 0；当 p 接近 0 时，loss 会变得非常大。</p>
+          <div class="grid-3">
+            <div class="card">
+              <strong>p = 0.90</strong>
+              <div class="formula">-log(0.90) ≈ 0.105</div>
+              <p>模型很相信正确答案，损失很小。</p>
+            </div>
+            <div class="card">
+              <strong>p = 0.50</strong>
+              <div class="formula">-log(0.50) ≈ 0.693</div>
+              <p>模型不太确定，损失中等。</p>
+            </div>
+            <div class="warn">
+              <strong>p = 0.01</strong>
+              <div class="formula">-log(0.01) ≈ 4.605</div>
+              <p>真实类别概率极低，说明模型错得很自信，损失很大。</p>
+            </div>
+          </div>
+
+          <h3>5. softmax + 交叉熵的梯度直觉</h3>
+          <p>教材里常见一个非常重要的结论：当 softmax 和交叉熵组合使用时，logits 的梯度形式会变得很简洁：</p>
+          <div class="formula">∂L / ∂oᵢ = ŷᵢ - yᵢ<small>oᵢ 是第 i 类 logit；ŷᵢ 是 softmax 后的预测概率；yᵢ 是真实 one-hot 标签。</small></div>
+          <p>这句话的意思是：<strong>参数更新的信号，本质上来自“预测概率 - 真实标签”。</strong>如果某个错误类别预测概率太高，梯度会把它压下去；如果真实类别预测概率太低，梯度会把它抬上来。</p>
+          <div class="example">
+            <h3>用一个三分类例子看梯度方向</h3>
+            <p>真实标签是 class 1：<span class="kbd">y = [0, 1, 0]</span>。模型预测：<span class="kbd">ŷ = [0.66, 0.24, 0.10]</span>。</p>
+            <div class="formula">ŷ - y = [0.66, -0.76, 0.10]</div>
+            <p>第 0 类预测太高，所以梯度为正，训练会倾向于降低它的 logit；第 1 类是真实类别但概率太低，所以梯度为负，训练会倾向于提高它的 logit；第 2 类也略高，也会被压低。</p>
+          </div>
+
           <div class="warn">
             <h3>易错点</h3>
             <p><strong>softmax 是把输出变成概率；cross entropy 是计算预测概率和真实标签之间的差距。</strong>两者不是同一个东西。</p>
@@ -940,7 +981,7 @@ o = W₂h + b₂
 
         <section id="training">
           <h2>七、完整训练流程</h2>
-          <p>训练不用先深挖反向传播公式。初学阶段要知道：反向传播根据 loss 计算每个参数应该怎么改，优化器再更新参数。</p>
+          <p>训练的核心问题是：模型一开始的参数通常是随机的，预测会错。我们需要一种方法，根据错误程度自动调整参数，让下一次预测更好。这个过程就靠损失函数、反向传播和优化器配合完成。</p>
           <div class="flow">
             <div class="step">1 输入数据 x</div>
             <div class="step">2 前向传播</div>
@@ -953,6 +994,73 @@ o = W₂h + b₂
           <div class="note">
             <h3>一句话记忆</h3>
             <p>前向传播负责“算预测”，损失函数负责“评估错多少”，反向传播负责“算参数该往哪改”，优化器负责“真的去改参数”。</p>
+          </div>
+
+          <h3>1. 前向传播：从输入一路算到 loss</h3>
+          <p>前向传播就是按网络结构从左到右计算。以一个分类 MLP 为例：</p>
+          <div class="formula">h = ReLU(W₁x + b₁)
+o = W₂h + b₂
+ŷ = softmax(o)
+L = CrossEntropy(y, ŷ)</div>
+          <p>这里每一步都会产生中间结果。反向传播时，这些中间结果会被用来计算梯度，所以训练时不只是得到最终答案，还要记录计算过程。</p>
+
+          <h3>2. 梯度：参数对 loss 的影响方向</h3>
+          <p>梯度可以理解为一个问题的答案：<strong>如果这个参数稍微变大一点，loss 会变大还是变小？变化快不快？</strong></p>
+          <div class="grid-2">
+            <div class="card">
+              <h3>梯度为正</h3>
+              <p>参数变大时 loss 倾向于变大。为了让 loss 下降，参数应该减小。</p>
+            </div>
+            <div class="card">
+              <h3>梯度为负</h3>
+              <p>参数变大时 loss 倾向于变小。为了让 loss 下降，参数应该增大。</p>
+            </div>
+          </div>
+          <div class="formula">参数更新的基本形式：
+w ← w - η · ∂L/∂w
+b ← b - η · ∂L/∂b<small>η 是学习率，控制每次更新走多大一步。</small></div>
+
+          <h3>3. 反向传播：用链式法则把责任分回去</h3>
+          <p>反向传播不是一种新的数学魔法，它主要是在神经网络计算图上高效使用链式法则。因为 loss 是由最后输出算出来的，而最后输出又依赖前一层，前一层又依赖更前面的层，所以我们需要从后往前一层层计算梯度。</p>
+          <div class="flow">
+            <div class="step">loss</div>
+            <div class="step">输出层参数</div>
+            <div class="step">隐藏层输出</div>
+            <div class="step">隐藏层参数</div>
+            <div class="step">输入附近参数</div>
+          </div>
+          <div class="formula">链式法则直觉：
+如果 L 依赖 y，y 依赖 h，h 依赖 w
+那么 ∂L/∂w = ∂L/∂y · ∂y/∂h · ∂h/∂w</div>
+          <p>这就是“反向”的原因：先知道最终 loss 对输出的影响，再逐层往前传，把每个参数对 loss 的影响都算出来。</p>
+
+          <h3>4. 一个极简线性回归例子</h3>
+          <p>假设只有一个输入特征，模型是 <span class="kbd">ŷ = wx + b</span>，用平方损失：</p>
+          <div class="formula">L = 1/2 · (ŷ - y)²</div>
+          <p>如果某个样本 <span class="kbd">x = 2</span>，真实值 <span class="kbd">y = 10</span>，当前模型预测 <span class="kbd">ŷ = 6</span>，那么误差是 <span class="kbd">ŷ - y = -4</span>，说明预测偏低。</p>
+          <div class="formula">∂L/∂w = (ŷ - y) · x = -4 × 2 = -8
+∂L/∂b = (ŷ - y) = -4</div>
+          <p>梯度是负数，按照 <span class="kbd">w ← w - η·梯度</span> 更新时，w 和 b 会增大，下一次预测值就会被推高。这和直觉一致：预测太低，就应该让模型输出变大。</p>
+
+          <h3>5. 一个分类任务里的反向传播直觉</h3>
+          <p>分类时，softmax + 交叉熵会产生 <span class="kbd">ŷ - y</span> 这样的误差信号。它会从输出层开始往前传：</p>
+          <div class="flow">
+            <div class="step">真实类概率太低</div>
+            <div class="step">提高真实类 logit</div>
+            <div class="step">压低错误类 logit</div>
+            <div class="step">调整隐藏层特征</div>
+            <div class="step">更新 W、b</div>
+          </div>
+          <p>所以反向传播不只是改最后一层，它还会告诉前面的隐藏层：你提取的特征是否有助于分类，如果没用，就通过梯度慢慢调整。</p>
+
+          <div class="warn">
+            <h3>易错点：反向传播和梯度下降不是一回事</h3>
+            <p><strong>反向传播</strong>负责计算梯度，也就是每个参数该怎么影响 loss；<strong>梯度下降/优化器</strong>负责使用这些梯度更新参数。前者是“算方向”，后者是“走一步”。</p>
+          </div>
+
+          <div class="exam">
+            <h3>考试怎么答：反向传播</h3>
+            <p>反向传播是一种在神经网络中高效计算梯度的方法。它从损失函数开始，利用链式法则将误差信号从输出层逐层传回前面的层，计算各层参数对 loss 的偏导数。随后优化器根据这些梯度更新权重和偏置，使损失函数逐渐减小。</p>
           </div>
         </section>
 
